@@ -641,7 +641,7 @@ class setup_detection:
                         continue
 
                     # Create datastores:
-                    data_store = {'t': [], 'power': [], 'slowness': [], 'back_azi': []}
+                    data_store = {'t': [], 'f_trace': [], 'slowness': [], 'back_azi': []}
 
                     # Load data:
                     try:
