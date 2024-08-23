@@ -58,7 +58,7 @@ def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n
     be wrapped using Numba. Function inspired by Bowden et al. (2021).
     Performs array processing in polar coordinates.
     Returns:
-    Pfreq_all
+    F_traces : 3-d array shape (n_windows, n_sl, n_baz) of F statistic grids for each time window 
     """
     # Define grid of slownesses:
     # number of pixes in x and y
@@ -79,7 +79,7 @@ def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n
     # Since receivers are relative to the array centre, can shift all receivers back to that centre.
 
     # Create data stores:
-    Pfreq_all = np.zeros((data.shape[0],len(target_freqs),n_sl,n_baz), dtype=np.complex128) # Explicitly create Pxx_all, as otherwise prange won't work correctly.
+    F_traces = np.zeros((data.shape[0],n_sl,n_baz), dtype=np.complex128) # Explicitly create Pxx_all, as otherwise prange won't work correctly.
 
     # Then loop over windows:
     for win_idx in prange(data.shape[0]):
@@ -95,6 +95,7 @@ def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n
         for sta_idx in range(n_stations):
             # Calculate spectra for current station:
             ###Pxx_all[:,sta_idx] = np.fft.rfft(data[win_idx,sta_idx,:], n=nfft) # (Use real fft, as input data is real) # DOESN'T WORK WITH NUMBA!
+            
             with objmode(Pxx_curr='complex128[:]'):
                 Pxx_curr = np.fft.rfft(data[win_idx,sta_idx,:], n=nfft)
             Pxx_all[:,sta_idx] = Pxx_curr
@@ -126,11 +127,17 @@ def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n
                     aconj = np.conj(a)
                     Pfreq[ii,ir,itheta]=np.dot(np.dot(aconj,Rxx),a) # Cross-correlation, with two timeshifts applied to push the two stations to the centre point. 
                     # (This can also be seen as projecting Rxx onto a new basis.)
-    
+        
+                    # Now calculate F statistic assuming un-correlated noise where Pxx_all is the power o
+                    # F = (N-1)(1/N)*(beam_power)/(sum(station power) - beam_power)
+        beam_powers = Pfreq.sum(axis=0) # 2-d array of power as a function of slow, baz
+        data_powers = (np.abs(np.real(Pxx_all))**2).sum()
+        F = ((n_stations-1)/(n_stations)) * (beam_powers) / (data_powers - beam_powers)
         # And append output to datastore:
-        Pfreq_all[win_idx,:,:,:] = Pfreq
+        # This is (cross-correlation) beam power at all frequencies, slownesses bazis
+        F_traces[win_idx,:,:] = F
 
-    return Pfreq_all 
+    return F_traces
 
 
 # @jit(nopython=True, parallel=True)#, nogil=True)
@@ -680,24 +687,25 @@ class setup_detection:
                         time_this_minute_st = st_trimmed[0].stats.starttime
                         # Run array processing:
                         # (to get power in slowness space)
-                        Psum_all = self._beamforming(st_trimmed)
+                        F_traces = self._beamforming(st_trimmed)
                         del st_trimmed 
                         gc.collect()
 
                         # Calculate time-series outputs (for detection) from data:
-                        t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
+                        t_series, fs, slownesses, back_azis = self._find_time_series(F_traces)
                         # And append to data out:
                         t_series_out = []
                         for t_serie in t_series:
                             t_series_out.append( str(time_this_minute_st + t_serie) )
 
                         data_store['t'].extend(t_series_out)
-                        data_store['power'].extend(powers)
+                        data_store['f_trace'].extend(fs)
+
                         data_store['slowness'].extend(slownesses)
                         data_store['back_azi'].extend(back_azis)
 
                         # And clear memory:
-                        del Psum_all, t_series, powers, slownesses, back_azis
+                        del Psum_all, t_series, fs, slownesses, back_azis
                         gc.collect()
 
                     # And save data out:
@@ -866,39 +874,39 @@ class setup_detection:
                 Psum_all[i,:,:] = np.sum(Pfreq_all[i,:,:,:],axis=0)
         return Psum_all
 
-    def _find_time_series(self, Psum_all):
+    def _find_time_series(self, F_traces):
         """Function to calculate beamforming time-series outputs, given 
         a raw beamforming result.
         Note that the time-series timestamps are in the middle of the time-
         wimdows.
-        Psum_all - Sum of Pxx for each time window, and for all slownesses.
-                    Shape is n_win x slowness WE x slowness SN
+        F_traces - Sum of F statistic for each time window, and for all slownesses.
+                    Shape is n_win x n_sl x n_baz
         Returns time-series of coherency (power), slowness and back-azimuth.
         """
         # Calcualte ux, uy:
-        ur = np.linspace(0, self.max_sl,Psum_all.shape[1])
-        utheta = utheta = np.linspace(0,360-(360/Psum_all.shape[2]),Psum_all.shape[2])
+        ur = np.linspace(0, self.max_sl,F_traces.shape[1])
+        utheta = utheta = np.linspace(0,360-(360/F_traces.shape[2]), F_traces.shape[2])
         # Create time-series:
-        n_win_curr = Psum_all.shape[0]
+        n_win_curr = F_traces.shape[0]
         t_series = np.arange(self.win_step_inc_s/2,(n_win_curr*self.win_step_inc_s) + (self.win_step_inc_s/2), self.win_step_inc_s)
         if len(t_series) > n_win_curr:
             t_series = t_series[0:n_win_curr]
         # And find power, slowness and back-azimuth:
-        powers = np.zeros(n_win_curr)
+        Fs = np.zeros(n_win_curr)
         slownesses = np.zeros(n_win_curr)
         back_azis = np.zeros(n_win_curr)
         # Loop over windows in time:
         for i in range(n_win_curr):
             # Calculate max. power:
-            powers[i] = np.max(np.abs(Psum_all[i,:,:]))
+            Fs[i] = np.max(np.abs(F_traces[i,:,:]))
             # Calculate slowness:
-            r_idx = np.where(Psum_all[i,:,:] == Psum_all[i,:,:].max())[0][0]
-            theta_idx = np.where(Psum_all[i,:,:] == Psum_all[i,:,:].max())[1][0]
+            r_idx = np.where(F_traces[i,:,:] == F_traces[i,:,:].max())[0][0]
+            theta_idx = np.where(F_traces[i,:,:] == F_traces[i,:,:].max())[1][0]
             slownesses[i] = ur[r_idx]
             # And calculate back-azimuth:
             back_azis[i] = utheta[theta_idx]
             
-        return t_series, powers, slownesses, back_azis
+        return t_series, Fs, slownesses, back_azis
 
 
     def _beamforming(self, st_trimmed, verbosity=0):
@@ -918,7 +926,7 @@ class setup_detection:
         if verbosity>1:
             logger.info("Performing run for",data.shape[0],"windows")
             tic = time.time()
-        Pfreq_all = _fast_freq_domain_array_proc(data, self.min_sl, self.max_sl, self.n_sl, self.min_baz, self.max_baz, self.n_baz,
+        F_traces = _fast_freq_domain_array_proc(data, self.min_sl, self.max_sl, self.n_sl, self.min_baz, self.max_baz, self.n_baz,
                                                  self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, self.remove_autocorr)
         if verbosity>1:
             toc = time.time()
@@ -927,15 +935,7 @@ class setup_detection:
         del data 
         gc.collect()
 
-        # And remove any data where stations don't exist:
-        Pfreq_all = np.nan_to_num(Pfreq_all, copy=False, nan=0.0)
-
-        # Stack (and normalise) data:
-        Psum_all = self._stack_results(Pfreq_all)
-        del Pfreq_all
-        gc.collect()
-
-        return Psum_all
+        return F_traces
 
     def _calculate_mad(self, x, scale=1.4826):
         """
@@ -1028,13 +1028,13 @@ class setup_detection:
             # (to get power in polar slowness space)
             # (Note that need to run for a number of windows, to allow for adequate shifting of data)
             self.channel_curr = self.channels_to_use[0] # Do for vertical first
-            Psum_all = self._beamforming(st_trimmed, verbosity=verbosity)
+            F_traces = self._beamforming(st_trimmed, verbosity=verbosity)
             del st_trimmed 
             gc.collect()
             # Find highest power slowness space for event:
-            t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
-            max_idx = np.argmax(powers)
-            Psum_opt = np.abs(Psum_all[max_idx,:,:])
+            t_series, fs, slownesses, back_azis = self._find_time_series(F_traces)
+            max_idx = np.argmax(fs)
+            Psum_opt = np.abs(F_traces[max_idx,:,:])
             # Find FWHM for slowness and bazi:
             slow_idx_peak = np.where(Psum_opt==np.max(Psum_opt))[0][0]
             bazi_idx_peak = np.where(Psum_opt==np.max(Psum_opt))[1][0]
