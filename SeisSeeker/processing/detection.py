@@ -132,7 +132,7 @@ def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n
                     # F = (N-1)(1/N)*(beam_power)/(sum(station power) - beam_power)
         beam_powers = Pfreq.sum(axis=0) # 2-d array of power as a function of slow, baz
         data_powers = (np.abs(np.real(Pxx_all))**2).sum()
-        F = ((n_stations-1)/(n_stations)) * (beam_powers) / (data_powers - beam_powers)
+        F = ((n_stations-1)/(n_stations)) * ((beam_powers) / (data_powers - beam_powers))
         # And append output to datastore:
         # This is (cross-correlation) beam power at all frequencies, slownesses bazis
         F_traces[win_idx,:,:] = F
@@ -210,8 +210,8 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
         curr_peak_hor_idx = Z_hor_phase_pair_idxs[event_idx][1]
         curr_events['t1'].append(t_series_df_Z['t'][curr_peak_Z_idx])
         curr_events['t2'].append(t_series_df_hor['t'][curr_peak_hor_idx])
-        curr_events['pow1'].append(t_series_df_Z['power'][curr_peak_Z_idx])
-        curr_events['pow2'].append(t_series_df_hor['power'][curr_peak_hor_idx])
+        curr_events['pow1'].append(t_series_df_Z["f_trace"][curr_peak_Z_idx])
+        curr_events['pow2'].append(t_series_df_hor["f_trace"][curr_peak_hor_idx])
         curr_events['slow1'].append(t_series_df_Z['slowness'][curr_peak_Z_idx])
         curr_events['slow2'].append(t_series_df_hor['slowness'][curr_peak_hor_idx])
         curr_events['bazi1'].append(t_series_df_Z['back_azi'][curr_peak_Z_idx])
@@ -705,7 +705,7 @@ class setup_detection:
                         data_store['back_azi'].extend(back_azis)
 
                         # And clear memory:
-                        del Psum_all, t_series, fs, slownesses, back_azis
+                        del t_series, fs, slownesses, back_azis
                         gc.collect()
 
                     # And save data out:
@@ -1005,11 +1005,11 @@ class setup_detection:
             # Find FWHM for t1 pick:
             # (only use ascending currently (assume symetric pdf))
             t1_pick_idx = t_series_df_Z.index[t_series_df_Z['t'] == row['t1']][0]
-            Pxx_curr = t_series_df_Z.iloc[t1_pick_idx]['power'] 
+            Pxx_curr = t_series_df_Z.iloc[t1_pick_idx]["f_trace"] 
             idx_diff = 0
-            while Pxx_curr > t_series_df_Z.iloc[t1_pick_idx]['power'] / 2.:
+            while Pxx_curr > t_series_df_Z.iloc[t1_pick_idx]["f_trace"] / 2.:
                 idx_diff+=1
-                Pxx_curr = t_series_df_Z.iloc[t1_pick_idx+idx_diff]['power'] 
+                Pxx_curr = t_series_df_Z.iloc[t1_pick_idx+idx_diff]["f_trace"] 
             t1_err = obspy.UTCDateTime(t_series_df_Z.iloc[t1_pick_idx+idx_diff]['t']) - obspy.UTCDateTime(t_series_df_Z.iloc[t1_pick_idx]['t'])
             
             # Spatial uncertainty:
@@ -1077,11 +1077,11 @@ class setup_detection:
             # And find FWHM for t2 pick:
             # (only use ascending currently (assume symetric pdf))
             t2_pick_idx = t_series_df_hor.index[t_series_df_hor['t'] == row['t2']][0]
-            Pxx_curr = t_series_df_hor.iloc[t2_pick_idx]['power'] 
+            Pxx_curr = t_series_df_hor.iloc[t2_pick_idx]["f_trace"] 
             idx_diff = 0
-            while Pxx_curr > t_series_df_hor.iloc[t2_pick_idx]['power'] / 2.:
+            while Pxx_curr > t_series_df_hor.iloc[t2_pick_idx]["f_trace"] / 2.:
                 idx_diff+=1
-                Pxx_curr = t_series_df_hor.iloc[t2_pick_idx+idx_diff]['power'] 
+                Pxx_curr = t_series_df_hor.iloc[t2_pick_idx+idx_diff]["f_trace"] 
             t2_err = obspy.UTCDateTime(t_series_df_hor.iloc[t2_pick_idx+idx_diff]['t']) - obspy.UTCDateTime(t_series_df_hor.iloc[t2_pick_idx]['t'])
 
             # Spatial uncertainty:
@@ -1219,13 +1219,17 @@ class setup_detection:
                 t_series_df_N = t_series_df_N.iloc[:min_len]
                 t_series_df_E = t_series_df_E.iloc[:min_len]
 
+            #
+            t_series_df_Z["f_trace"] = t_series_df_Z["f_trace"] / t_series_df_Z["f_trace"].max()
+
             # Combine horizontals:
             # (Using RMS of N and E signals for slowness and average for BAZI)
             t_series_df_hor = t_series_df_N.copy()
-            t_series_df_hor["power"] = np.sqrt(t_series_df_N["power"].values**2 + t_series_df_E["power"].values**2)
-            NE_Pxx_max = np.max(np.concatenate((t_series_df_N["power"].values, t_series_df_E["power"].values)))
-            N_weighting = t_series_df_N["power"].values / NE_Pxx_max
-            E_weighting = t_series_df_E["power"].values / NE_Pxx_max
+            t_series_df_hor["f_trace"] = np.sqrt(t_series_df_N["f_trace"].values**2 + t_series_df_E["f_trace"].values**2)
+            t_series_df_hor["f_trace"] = t_series_df_hor["f_trace"] / t_series_df_hor["f_trace"].max()
+            NE_Pxx_max = np.max(np.concatenate((t_series_df_N["f_trace"].values, t_series_df_E["f_trace"].values)))
+            N_weighting = t_series_df_N["f_trace"].values / NE_Pxx_max
+            E_weighting = t_series_df_E["f_trace"].values / NE_Pxx_max
             t_series_df_hor["slowness"] = np.sqrt(np.average(np.vstack((t_series_df_N['slowness']**2, t_series_df_E['slowness']**2)), 
                                                         axis=0, weights=np.vstack((N_weighting, 
                                                         E_weighting)))) # Weighted mean (weighted by power)
@@ -1237,13 +1241,13 @@ class setup_detection:
             gc.collect()
 
             # Calculate pick thresholds:
-            mad_pick_threshold_Z = np.median(t_series_df_Z['power'].values) + (self.mad_multiplier * self._calculate_mad(t_series_df_Z['power']))
-            mad_pick_threshold_hor = np.median(t_series_df_hor['power'].values) + (self.mad_multiplier * self._calculate_mad(t_series_df_hor['power']))
+            mad_pick_threshold_Z = np.median(t_series_df_Z["f_trace"].values) + (self.mad_multiplier * self._calculate_mad(t_series_df_Z["f_trace"]))
+            mad_pick_threshold_hor = np.median(t_series_df_hor["f_trace"].values) + (self.mad_multiplier * self._calculate_mad(t_series_df_hor["f_trace"]))
             
             # Get phase picks:
             min_pick_dist = int(self.min_event_sep_s / (obspy.UTCDateTime(t_series_df_Z['t'][1]) - obspy.UTCDateTime(t_series_df_Z['t'][0])))
-            peaks_Z, _ = find_peaks(t_series_df_Z['power'].values, height=mad_pick_threshold_Z, distance=min_pick_dist)
-            peaks_hor, _ = find_peaks(t_series_df_hor['power'].values, height=mad_pick_threshold_hor, distance=min_pick_dist)
+            peaks_Z, _ = find_peaks(t_series_df_Z["f_trace"].values, height=mad_pick_threshold_Z, distance=min_pick_dist)
+            peaks_hor, _ = find_peaks(t_series_df_hor["f_trace"].values, height=mad_pick_threshold_hor, distance=min_pick_dist)
 
             # Phase assoicate by BAZI threshold and max. power:
             events_df = _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, 
@@ -1265,8 +1269,8 @@ class setup_detection:
                 # print("="*40)
                 fig, ax = plt.subplots(nrows=3, sharex=True, figsize=(9,6))
                 # Plot power:
-                ax[0].plot(t_series_df_Z['t'], t_series_df_Z['power'], label="Vertical power")
-                ax[0].plot(t_series_df_hor['t'], t_series_df_hor['power'], label="Horizontal power")
+                ax[0].plot(t_series_df_Z['t'], t_series_df_Z["f_trace"], label="Vertical power")
+                ax[0].plot(t_series_df_hor['t'], t_series_df_hor["f_trace"], label="Horizontal power")
                 # Plot slowness:
                 ax[1].plot(t_series_df_Z['t'], t_series_df_Z['slowness'], label="Vertical slowness")
                 ax[1].plot(t_series_df_hor['t'], t_series_df_hor['slowness'], label="Horizontal slowness")
@@ -1274,13 +1278,13 @@ class setup_detection:
                 ax[2].plot(t_series_df_Z['t'], t_series_df_Z['back_azi'], label="Vertical back-azimuth")
                 ax[2].plot(t_series_df_hor['t'], t_series_df_hor['back_azi'], label="Horizontal back-azimuth")
                 if len(events_df_all) > 0:
-                    ax[0].scatter(events_df_all['t1'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='r', label="P phase picks")
-                    ax[0].scatter(events_df_all['t2'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='b', label="S phase picks")
+                    ax[0].scatter(events_df_all['t1'], np.ones(len(events_df_all))*np.max(t_series_df_Z["f_trace"]), c='r', label="P phase picks")
+                    ax[0].scatter(events_df_all['t2'], np.ones(len(events_df_all))*np.max(t_series_df_Z["f_trace"]), c='b', label="S phase picks")
                 else:
                     logger.info("No events to plot.")
                 ax[0].legend()
                 ax[2].set_xlabel("Time")
-                ax[0].set_ylabel("Power (arb. units)")
+                ax[0].set_ylabel("F-statistic")
                 ax[1].set_ylabel("Slowness ($km$ $s^{-1}$)")
                 ax[2].set_ylabel("Back-azimuth ($^o$)")
                 # plt.gca().yaxis.set_major_locator(MaxNLocator(5)) 
