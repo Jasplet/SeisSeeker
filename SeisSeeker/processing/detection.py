@@ -119,7 +119,7 @@ def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n
                             Rxx[i1,i2] = 0
                     else:
                         Rxx[i1,i2] = np.conj(Pxx_all[curr_f_idx,i1]) * Pxx_all[curr_f_idx,i2]
-                        
+
             # And loop over phase shifts, calculating cross-correlation power:
             for ir in range(0,n_sl):
                 for itheta in range(0,n_baz):
@@ -127,6 +127,8 @@ def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n
                     a = np.exp(-1j*2*np.pi*target_f*timeshifts) # (a is a steering vector, to allign all traces with array centre)
                     aconj = np.conj(a)
                     Pfreq[ii,ir,itheta]=np.dot(np.dot(aconj,Rxx),a) # Cross-correlation, with two timeshifts applied to push the two stations to the centre point. 
+                    # np.dot is returning a sum product here making this 
+                    # effectively eqn 7 of Ruigrok et al., (2017)
                     # (This can also be seen as projecting Rxx onto a new basis.)
     
         # And append output to datastore:
