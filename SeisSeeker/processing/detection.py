@@ -28,6 +28,9 @@ from SeisSeeker.processing import lookup_table_manager, location
 
 logger = logging.getLogger(__name__)
 
+# GLobal constants:
+MAD_SCALE = 1.4826  # Scale factor to convert MAD to std. dev.
+
 
 # ---------- Define main functions ------------
 class CustomError(Exception):
@@ -50,7 +53,7 @@ def xy_to_rtheta(x, y):
     return r, theta
 
 
-@jit(nopython=True, parallel=True)  # , nogil=True)
+@jit(nopython=True, parallel=True)
 def _fast_freq_domain_array_proc(
     data,
     min_sl,
@@ -68,13 +71,15 @@ def _fast_freq_domain_array_proc(
     remove_autocorr,
 ):
     """
-    Performs array processing using methodinspired by Bowden et al. (2021).
+    Performs array processing using method inspired by Bowden et al. (2021).
     Performs array processing in polar coordinates.
     Designed to be wrapped using Numba to improve performance.
+
     Parameters:
     ----------
     data : np.ndarray
-        3D numpy array of data to process. Shape must be (n_windows, n_stations, n_t_samp).
+        3D numpy array of data to process. Shape must be
+        (n_windows, n_stations, n_t_samp).
     min_sl : float
         Minimum slowness to analyse for, in s/km.
     max_sl : float
@@ -92,9 +97,9 @@ def _fast_freq_domain_array_proc(
     target_freqs : list
         List of target frequencies to analyse, in Hz.
     xx : np.ndarray
-        2D numpy array of x-coordinates of station locations, in km.
+        1D numpy array of x-coordinates of station locations, in km.
     yy : np.ndarray
-        2D numpy array of y-coordinates of station locations, in km.
+        1D numpy array of y-coordinates of station locations, in km.
     n_stations : int
         Number of stations in the array.
     n_t_samp : int
@@ -105,68 +110,60 @@ def _fast_freq_domain_array_proc(
     Returns:
     ----------
     Pfreq_all : np.ndarray
-        4D numpy array of processed data. Shape will be (n_windows, len(target_freqs), n_sl, n_baz).
+        4D numpy array of processed data. Shape will be
+        (n_windows, len(target_freqs), n_sl, n_baz).
     """
     # Define grid of slownesses:
-    # number of pixes in x and y
-    # (Determines number of phase shifts to perform)
     ur = np.linspace(min_sl, max_sl, n_sl)
     utheta = np.linspace(min_baz, max_baz, n_baz)
     utheta_rad = np.deg2rad(utheta)
 
-    # Compute time-shifts once:
-    # (so that don't have to do it for every frequency)
-    tlib = np.zeros((n_stations, n_sl, n_baz), dtype=np.complex128)
-    for ir in range(0, n_sl):
-        for itheta in range(0, n_baz):
-            # tlib[:,ix,iy] = xx*ux[ix] + yy*uy[iy] # (distance x slowness = distance / velocity = time)
-            tlib[:, ir, itheta] = xx * ur[ir] * np.sin((utheta_rad[itheta])) + yy * ur[
-                ir
-            ] * np.cos(
-                (utheta_rad[itheta])
-            )  # (distance x slowness = distance / velocity = time)
-    # Since receivers are relative to the array centre, can shift all receivers back to that centre.
+    # # Compute time-shifts once:
+    # tlib = np.zeros((n_stations, n_sl, n_baz), dtype=np.complex128)
+    # # r, theta as this is polar coord system:
+    # for ir in range(n_sl):
+    #     for itheta in range(n_baz):
+    #         tlib[:, ir, itheta] = xx * ur[ir] * np.sin(utheta_rad[itheta]) + yy * ur[
+    #             ir
+    #         ] * np.cos(utheta_rad[itheta])
 
-    # Create data stores:
+    # Vectorized computation of time-shifts for all stations, slowness, and back-azimuth
+    # xx and yy are (n_stations,) arrays, ur is (n_sl,), utheta_rad is (n_baz,)
+    # We want tlib shape (n_stations, n_sl, n_baz)
+    xx_ = xx[:, np.newaxis, np.newaxis]  # shape (n_stations, 1, 1)
+    yy_ = yy[:, np.newaxis, np.newaxis]  # shape (n_stations, 1, 1)
+    ur_ = ur[np.newaxis, :, np.newaxis]  # shape (1, n_sl, 1)
+    utheta_rad_ = utheta_rad[np.newaxis, np.newaxis, :]  # shape (1, 1, n_baz)
+    tlib_tmp = xx_ * ur_ * np.sin(utheta_rad_) + yy_ * ur_ * np.cos(utheta_rad_)
+    # recast array as complex128
+    tlib = tlib_tmp.astype(np.complex128)
+    del tlib_tmp, xx_, yy_, ur_, utheta_rad_
+    gc.collect()
+
     Pfreq_all = np.zeros(
         (data.shape[0], len(target_freqs), n_sl, n_baz), dtype=np.complex128
-    )  # Explicitly create Pxx_all, as otherwise prange won't work correctly.
-
-    # Then loop over windows:
+    )
     for win_idx in prange(data.shape[0]):
-        # Calculate spectra:
-        # Construct data structure:
-        nfft = 2.0 ** np.ceil(np.log2(n_t_samp))
-        nfft = np.array(nfft, dtype=np.int64)
-        Pxx_all = np.zeros(
-            (np.int64((nfft / 2) + 1), n_stations), dtype=np.complex128
-        )  # Power spectra
+        nfft = int(2 ** np.ceil(np.log2(n_t_samp)))
+        Pxx_all = np.zeros((int(nfft / 2) + 1, n_stations), dtype=np.complex128)
         dt = 1.0 / fs
-        df = 1.0 / (2.0 * nfft * dt)
-        xf = np.linspace(0.0, 1.0 / (2.0 * dt), np.int64((nfft / 2) + 1))
+        xf = np.linspace(0.0, 1.0 / (2.0 * dt), int(nfft / 2) + 1)
         # Calculate power spectra for all stations:
         for sta_idx in range(n_stations):
-            # Calculate spectra for current station:
-            ###Pxx_all[:,sta_idx] = np.fft.rfft(data[win_idx,sta_idx,:], n=nfft) # (Use real fft, as input data is real) # DOESN'T WORK WITH NUMBA!
             with objmode(Pxx_curr="complex128[:]"):
                 Pxx_curr = np.fft.rfft(data[win_idx, sta_idx, :], n=nfft)
             Pxx_all[:, sta_idx] = Pxx_curr
 
-        # Loop over all freqs, performing phase shifts:
         Pfreq = np.zeros((len(target_freqs), n_sl, n_baz), dtype=np.complex128)
-        counter_grid = 0
         for ii in range(len(target_freqs)):
-            # Find closest current freq.:
             target_f = target_freqs[ii]
             curr_f_idx = (np.abs(xf - target_f)).argmin()
 
-            # Construct a matrix of each station-station correlation before any phase shifts
             Rxx = np.zeros((n_stations, n_stations), dtype=np.complex128)
-            for i1 in range(0, n_stations):
-                for i2 in range(0, n_stations):
-                    # Remove autocorrelations:
+            for i1 in range(n_stations):
+                for i2 in range(n_stations):
                     if remove_autocorr:
-                        if not i1 == i2:
+                        if i1 != i2:
                             Rxx[i1, i2] = (
                                 np.conj(Pxx_all[curr_f_idx, i1])
                                 * Pxx_all[curr_f_idx, i2]
@@ -178,24 +175,13 @@ def _fast_freq_domain_array_proc(
                             np.conj(Pxx_all[curr_f_idx, i1]) * Pxx_all[curr_f_idx, i2]
                         )
 
-            # And loop over phase shifts, calculating cross-correlation power:
-            for ir in range(0, n_sl):
-                for itheta in range(0, n_baz):
-                    timeshifts = tlib[
-                        :, ir, itheta
-                    ]  # Calculate the "steering vector" (a vector in frequency space, based on phase-shift)
-                    a = np.exp(
-                        -1j * 2 * np.pi * target_f * timeshifts
-                    )  # (a is a steering vector, to allign all traces with array centre)
+            for ir in range(n_sl):
+                for itheta in range(n_baz):
+                    timeshifts = tlib[:, ir, itheta]
+                    a = np.exp(-1j * 2 * np.pi * target_f * timeshifts)
                     aconj = np.conj(a)
-                    Pfreq[ii, ir, itheta] = np.dot(
-                        np.dot(aconj, Rxx), a
-                    )  # Cross-correlation, with two timeshifts applied to push the two stations to the centre point.
-                    # np.dot is returning a sum product here making this
-                    # effectively eqn 7 of Ruigrok et al., (2017)
-                    # (This can also be seen as projecting Rxx onto a new basis.)
+                    Pfreq[ii, ir, itheta] = np.dot(np.dot(aconj, Rxx), a)
 
-        # And append output to datastore:
         Pfreq_all[win_idx, :, :, :] = Pfreq
 
     return Pfreq_all
@@ -263,8 +249,6 @@ def _phase_associator(
     """
     Function to perform phase association for numba implementation.
     """
-    # Setup events datastores:
-    list_of_curr_event_dfs = []
     # Find back-azimuths associated with phase picks:
     bazis_Z = t_series_df_Z["back_azi"].values[peaks_Z]
     bazis_hor = t_series_df_hor["back_azi"].values[peaks_hor]
@@ -341,7 +325,7 @@ def _phase_associator(
             filt_events_lst = []
             # And loop over events, selecting only max. power events:
             tmp_count = 0
-            for index, row in events_df.iterrows():
+            for _, row in events_df.iterrows():
                 tmp_count += 1
                 if tmp_count == 1:
                     tmp_lst = []
@@ -1613,6 +1597,7 @@ class setup_detection:
             gc.collect()
 
             # Calculate pick thresholds:
+
             mad_pick_threshold_Z = np.median(t_series_df_Z["power"].values) + (
                 self.mad_multiplier * self._calculate_mad(t_series_df_Z["power"])
             )
@@ -2048,4 +2033,4 @@ class setup_detection:
             gc.collect()
 
 
-# ----------------------------------------------- End: Define main functions -----------------------------------------------
+# ------------- End: Define main functions --------------------
