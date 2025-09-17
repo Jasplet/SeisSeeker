@@ -1598,11 +1598,16 @@ class setup_detection:
 
             # Calculate pick thresholds:
 
-            mad_pick_threshold_Z = np.median(t_series_df_Z["power"].values) + (
-                self.mad_multiplier * self._calculate_mad(t_series_df_Z["power"])
+            mad_pick_threshold_Z = moving_window_mad(
+                t_series_df_Z["power"].values,
+                self.mad_window_length_s,
+                self.mad_multiplier,
             )
-            mad_pick_threshold_hor = np.median(t_series_df_hor["power"].values) + (
-                self.mad_multiplier * self._calculate_mad(t_series_df_hor["power"])
+
+            mad_pick_threshold_hor = moving_window_mad(
+                t_series_df_hor["power"].values,
+                self.mad_window_length_s,
+                self.mad_multiplier,
             )
 
             # Get phase picks:
@@ -2031,6 +2036,47 @@ class setup_detection:
         else:
             del st, composite_st
             gc.collect()
+
+
+def moving_window_mad(trace, window_len, mad_multiplier):
+    """
+    Function to calculate the median absolute deviation (MAD) using a
+    moving window over a beam power time-series.
+
+    For the start and end of the time-series, where a full window is not
+    available, the window is truncated to fit within the time-series.
+
+    Note that the MAD is scaled to be equivalent to the standard deviation
+    for a Gaussian distribution, by multiplying by the constant 1.4826.
+    See: https://en.wikipedia.org/wiki/Median_absolute_deviation
+
+    Parameters
+    ----------
+    trace : np.ndarray
+        1D numpy array containing beam power time-series.
+
+    window_len : int
+        Length of moving window, in number of samples.
+
+    mad_multiplier : float
+        Multiplier for MAD to set detection threshold. For example, a value of
+        2 would set the threshold to be 2 times the MAD above the median. This is scaled
+        by 1.4826 within the function to be equivalent to standard deviations for a
+        Gaussian distribution.
+    """
+    # Create datastore:
+    mad_thresholds = np.zeros(trace.shape)
+    half_win = int(window_len / 2)
+    for i in range(len(trace)):
+        start = max(0, i - half_win)
+        end = min(len(trace), i + half_win)
+        window = trace[start:end]
+        mad = np.median(np.abs(window - np.median(window)))
+        # add one to mad_multiplier as the multiplier represents the
+        # number of standard deviations above the median.
+        mad_thresholds[i] = MAD_SCALE * (1 + mad_multiplier) * mad
+
+    return mad_thresholds
 
 
 # ------------- End: Define main functions --------------------
