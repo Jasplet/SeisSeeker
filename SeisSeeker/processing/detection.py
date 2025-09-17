@@ -29,13 +29,13 @@ from SeisSeeker.processing import lookup_table_manager, location
 logger = logging.getLogger(__name__)
 
 
-# ----------------------------------------------- Define main functions -----------------------------------------------
+# ---------- Define main functions ------------
 class CustomError(Exception):
     pass
 
 
-def flatten_list(l):
-    return [item for sublist in l for item in sublist]
+def flatten_list(list_to_flatten):
+    return [item for sublist in list_to_flatten for item in sublist]
 
 
 def xy_to_rtheta(x, y):
@@ -67,11 +67,45 @@ def _fast_freq_domain_array_proc(
     n_t_samp,
     remove_autocorr,
 ):
-    """Function to perform array processing fast due to being designed to
-    be wrapped using Numba. Function inspired by Bowden et al. (2021).
+    """
+    Performs array processing using methodinspired by Bowden et al. (2021).
     Performs array processing in polar coordinates.
+    Designed to be wrapped using Numba to improve performance.
+    Parameters:
+    ----------
+    data : np.ndarray
+        3D numpy array of data to process. Shape must be (n_windows, n_stations, n_t_samp).
+    min_sl : float
+        Minimum slowness to analyse for, in s/km.
+    max_sl : float
+        Maximum slowness to analyse for, in s/km.
+    n_sl : int
+        Number of slowness values to analyse between min_sl and max_sl.
+    min_baz : float
+        Minimum back-azimuth, in degrees.
+    max_baz : float
+        Maximum back-azimuth, in degrees.
+    n_baz : int
+        Number of back-azimuth values to analyse between min_baz and max_baz.
+    fs : float
+        Sampling frequency of the data, in Hz.
+    target_freqs : list
+        List of target frequencies to analyse, in Hz.
+    xx : np.ndarray
+        2D numpy array of x-coordinates of station locations, in km.
+    yy : np.ndarray
+        2D numpy array of y-coordinates of station locations, in km.
+    n_stations : int
+        Number of stations in the array.
+    n_t_samp : int
+        Number of time samples in the data.
+    remove_autocorr : bool
+        Whether to remove autocorrelations from the data.
+
     Returns:
-    Pfreq_all
+    ----------
+    Pfreq_all : np.ndarray
+        4D numpy array of processed data. Shape will be (n_windows, len(target_freqs), n_sl, n_baz).
     """
     # Define grid of slownesses:
     # number of pixes in x and y
@@ -79,8 +113,6 @@ def _fast_freq_domain_array_proc(
     ur = np.linspace(min_sl, max_sl, n_sl)
     utheta = np.linspace(min_baz, max_baz, n_baz)
     utheta_rad = np.deg2rad(utheta)
-    dur = ur[1] - ur[0]
-    dutheta = utheta[1] - utheta[0]
 
     # Compute time-shifts once:
     # (so that don't have to do it for every frequency)
@@ -1167,8 +1199,9 @@ class setup_detection:
     def _calculate_mad(self, x, scale=1.4826):
         """
         Calculates the Median Absolute Deviation (MAD) of the input array x.
-        Outputs an array of scaled mean absolute deviation values for the input array, x,
-        scaled to provide an estimation of the standard deviation of the distribution.
+        Outputs an array of scaled mean absolute deviation values for the
+        input array, x, scaled to provide an estimation of the standard
+        deviation of the distribution.
         """
         # Calculate median and mad values:
         mad = np.median(np.abs(x - np.median(x)))
