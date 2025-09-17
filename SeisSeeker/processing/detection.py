@@ -1622,11 +1622,13 @@ class setup_detection:
                 t_series_df_Z["power"].values,
                 height=mad_pick_threshold_Z,
                 distance=min_pick_dist,
+                prominence=mad_pick_threshold_Z,
             )
             peaks_hor, _ = find_peaks(
                 t_series_df_hor["power"].values,
                 height=mad_pick_threshold_hor,
                 distance=min_pick_dist,
+                prominence=mad_pick_threshold_hor,
             )
 
             # Phase assoicate by BAZI threshold and max. power:
