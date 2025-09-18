@@ -119,27 +119,25 @@ def _fast_freq_domain_array_proc(
     utheta_rad = np.deg2rad(utheta)
 
     # # Compute time-shifts once:
-    # tlib = np.zeros((n_stations, n_sl, n_baz), dtype=np.complex128)
-    # # r, theta as this is polar coord system:
-    # for ir in range(n_sl):
-    #     for itheta in range(n_baz):
-    #         tlib[:, ir, itheta] = xx * ur[ir] * np.sin(utheta_rad[itheta]) + yy * ur[
-    #             ir
-    #         ] * np.cos(utheta_rad[itheta])
+    tlib = np.zeros((n_stations, n_sl, n_baz), dtype=np.complex128)
+    # r, theta as this is polar coord system:
+    for ir in range(n_sl):
+        for itheta in range(n_baz):
+            tlib[:, ir, itheta] = xx * ur[ir] * np.sin(utheta_rad[itheta]) + yy * ur[
+                ir
+            ] * np.cos(utheta_rad[itheta])
 
     # Vectorized computation of time-shifts for all stations, slowness, and back-azimuth
     # xx and yy are (n_stations,) arrays, ur is (n_sl,), utheta_rad is (n_baz,)
     # We want tlib shape (n_stations, n_sl, n_baz)
-    xx_ = xx[:, np.newaxis, np.newaxis]  # shape (n_stations, 1, 1)
-    yy_ = yy[:, np.newaxis, np.newaxis]  # shape (n_stations, 1, 1)
-    ur_ = ur[np.newaxis, :, np.newaxis]  # shape (1, n_sl, 1)
-    utheta_rad_ = utheta_rad[np.newaxis, np.newaxis, :]  # shape (1, 1, n_baz)
-    tlib_tmp = xx_ * ur_ * np.sin(utheta_rad_) + yy_ * ur_ * np.cos(utheta_rad_)
-    # recast array as complex128
-    tlib = tlib_tmp.astype(np.complex128)
-    del tlib_tmp, xx_, yy_, ur_, utheta_rad_
-    gc.collect()
 
+    # xx_ = xx[:, np.newaxis, np.newaxis]  # shape (n_stations, 1, 1)
+    # yy_ = yy[:, np.newaxis, np.newaxis]  # shape (n_stations, 1, 1)
+    # ur_ = ur[np.newaxis, :, np.newaxis]  # shape (1, n_sl, 1)
+    # utheta_rad_ = utheta_rad[np.newaxis, np.newaxis, :]  # shape (1, 1, n_baz)
+    # tlib_tmp = xx_ * ur_ * np.sin(utheta_rad_) + yy_ * ur_ * np.cos(utheta_rad_)
+    # recast array as complex128
+    # tlib = tlib_tmp.astype(np.complex128)
     Pfreq_all = np.zeros(
         (data.shape[0], len(target_freqs), n_sl, n_baz), dtype=np.complex128
     )
@@ -214,23 +212,18 @@ def _phase_associator_core_worker(
                 t_hor_secs_after_start[curr_peak_hor_idx]
                 - t_Z_secs_after_start[curr_peak_Z_idx]
             )
-            if curr_t_phase_diff > 0:
-                if curr_t_phase_diff <= max_phase_sep_s:
-                    # ii. Check if bazis for Z and horizontals current pick match:
-                    if np.abs(bazis_Z[i] - bazis_hor[j]) < bazi_tol:
-                        match = True
-                    # And deal with if they are close to North:
-                    elif np.abs(bazis_Z[i] - bazis_hor[j]) > (360.0 - bazi_tol):
-                        match = True
-                    else:
-                        match = False
-
+            if (curr_t_phase_diff > 0) and (curr_t_phase_diff <= max_phase_sep_s):
+                # calc bazi diff between Z and H
+                bazi_diff = min(
+                    np.abs(bazis_Z[i] - bazis_hor[j]),
+                    360.0 - np.abs(bazis_Z[i] - bazis_hor[j]),
+                )
+                # ii. Check if bazis for Z and horizontals current pick match:
+                if bazi_diff < bazi_tol:
+                    match = [curr_peak_Z_idx, curr_peak_hor_idx]
                     # And associate phases and create event data if a match is found:
-                    if match:
-                        # Append pair idxs to data store:
-                        Z_hor_phase_pair_idxs.append(
-                            [curr_peak_Z_idx, curr_peak_hor_idx]
-                        )
+                    # Append pair idxs to data store:
+                    Z_hor_phase_pair_idxs.append(match)
 
     return Z_hor_phase_pair_idxs
 
@@ -254,21 +247,13 @@ def _phase_associator(
     bazis_hor = t_series_df_hor["back_azi"].values[peaks_hor]
 
     # -------------------------------------------------------------------
-    # Perform core phae association:
+    # Perform core phase association:
     # Prep. data for numba format:
     if verbosity > 1:
         logger.info("Pre-processing time-series")
-    t_Z_secs_after_start = []
-    for index, row in t_series_df_Z.iterrows():
-        t_Z_secs_after_start.append(
-            obspy.UTCDateTime(row["t"]) - obspy.UTCDateTime(t_series_df_Z["t"][0])
-        )
-    t_hor_secs_after_start = []
-    for index, row in t_series_df_hor.iterrows():
-        t_hor_secs_after_start.append(
-            obspy.UTCDateTime(row["t"]) - obspy.UTCDateTime(t_series_df_hor["t"][0])
-        )
-    # Run function:
+    t_Z_secs_after_start = np.array(t_series_df_Z["t"] - t_series_df_Z["t"][0])
+    t_hor_secs_after_start = np.array(t_series_df_hor["t"] - t_series_df_hor["t"][0])
+
     if verbosity > 1:
         logger.info("Performing phase association")
     Z_hor_phase_pair_idxs = _phase_associator_core_worker(
@@ -1506,28 +1491,38 @@ class setup_detection:
             if fname in self.out_fnames_array_proc:
                 # And load in data:
                 # Read in vertical data:
-                t_series_df_Z = pd.read_csv(fname)
+                t_series_df_Z = pd.read_csv(
+                    fname, converters={"t": lambda x: obspy.UTCDateTime(x)}
+                )
                 # And read in horizontals:
                 try:
                     fname_N = os.path.join(
                         self.outdir, "".join(("detection_t_series_", f_uid, "_chN.csv"))
                     )
-                    t_series_df_N = pd.read_csv(fname_N)
+                    t_series_df_N = pd.read_csv(
+                        fname_N, converters={"t": lambda x: obspy.UTCDateTime(x)}
+                    )
                 except FileNotFoundError:
                     fname_N = os.path.join(
                         self.outdir, "".join(("detection_t_series_", f_uid, "_ch1.csv"))
                     )
-                    t_series_df_N = pd.read_csv(fname_N)
+                    t_series_df_N = pd.read_csv(
+                        fname_N, converters={"t": lambda x: obspy.UTCDateTime(x)}
+                    )
                 try:
                     fname_E = os.path.join(
                         self.outdir, "".join(("detection_t_series_", f_uid, "_chE.csv"))
                     )
-                    t_series_df_E = pd.read_csv(fname_E)
+                    t_series_df_E = pd.read_csv(
+                        fname_E, converters={"t": lambda x: obspy.UTCDateTime(x)}
+                    )
                 except FileNotFoundError:
                     fname_E = os.path.join(
                         self.outdir, "".join(("detection_t_series_", f_uid, "_ch2.csv"))
                     )
-                    t_series_df_E = pd.read_csv(fname_E)
+                    t_series_df_E = pd.read_csv(
+                        fname_E, converters={"t": lambda x: obspy.UTCDateTime(x)}
+                    )
             else:
                 logger.warning(f"fname {fname} not in fname_array_proc list")
                 logger.warning(
@@ -1597,7 +1592,6 @@ class setup_detection:
             gc.collect()
 
             # Calculate pick thresholds:
-
             mad_pick_threshold_Z = moving_window_mad(
                 t_series_df_Z["power"].values,
                 self.mad_window_length_s,
@@ -1630,8 +1624,7 @@ class setup_detection:
                 distance=min_pick_dist,
                 prominence=mad_pick_threshold_hor,
             )
-
-            # Phase assoicate by BAZI threshold and max. power:
+            # Phase associate by BAZI threshold and max. power:
             events_df = _phase_associator(
                 t_series_df_Z,
                 t_series_df_hor,
@@ -1649,58 +1642,65 @@ class setup_detection:
                 events_df = self._calc_uncertainties(
                     events_df, t_series_df_Z, t_series_df_hor, verbosity=verbosity
                 )
-
-            # Append to datastore:
-            events_df_all = pd.concat([events_df_all, events_df])
-
             # Plot detected, phase-associated picks:
             if verbosity > 1:
                 # print("="*40)
                 logger.info("Event phase associations:")
                 # print(events_df)
                 # print("="*40)
+                time_after_startZ = np.array(t_series_df_Z["t"]) - t_series_df_Z["t"][0]
+                time_after_startH = (
+                    np.array(t_series_df_hor["t"]) - t_series_df_hor["t"][0]
+                )
+
                 fig, ax = plt.subplots(nrows=3, sharex=True, figsize=(9, 6))
                 # Plot power:
                 ax[0].plot(
-                    t_series_df_Z["t"], t_series_df_Z["power"], label="Vertical power"
+                    time_after_startZ, t_series_df_Z["power"], label="Vertical power"
                 )
                 ax[0].plot(
-                    t_series_df_hor["t"],
+                    time_after_startH,
                     t_series_df_hor["power"],
                     label="Horizontal power",
                 )
                 # Plot slowness:
                 ax[1].plot(
-                    t_series_df_Z["t"],
+                    time_after_startZ,
                     t_series_df_Z["slowness"],
                     label="Vertical slowness",
                 )
                 ax[1].plot(
-                    t_series_df_hor["t"],
+                    time_after_startH,
                     t_series_df_hor["slowness"],
                     label="Horizontal slowness",
                 )
                 # Plot back-azimuth:
                 ax[2].plot(
-                    t_series_df_Z["t"],
+                    time_after_startZ,
                     t_series_df_Z["back_azi"],
                     label="Vertical back-azimuth",
                 )
                 ax[2].plot(
-                    t_series_df_hor["t"],
+                    time_after_startH,
                     t_series_df_hor["back_azi"],
                     label="Horizontal back-azimuth",
                 )
-                if len(events_df_all) > 0:
+                if len(events_df) > 0:
+                    events_t1_after_start = (
+                        np.array(events_df["t1"]) - t_series_df_Z["t"][0]
+                    )
+                    events_t2_after_start = (
+                        np.array(events_df["t2"]) - t_series_df_Z["t"][0]
+                    )
                     ax[0].scatter(
-                        events_df_all["t1"],
-                        np.ones(len(events_df_all)) * np.max(t_series_df_Z["power"]),
+                        events_t1_after_start,
+                        np.ones(len(events_df)) * np.max(t_series_df_Z["power"]),
                         c="r",
                         label="P phase picks",
                     )
                     ax[0].scatter(
-                        events_df_all["t2"],
-                        np.ones(len(events_df_all)) * np.max(t_series_df_Z["power"]),
+                        events_t2_after_start,
+                        np.ones(len(events_df)) * np.max(t_series_df_Z["power"]),
                         c="b",
                         label="S phase picks",
                     )
@@ -1711,6 +1711,9 @@ class setup_detection:
                 ax[0].set_ylabel("Power (arb. units)")
                 ax[1].set_ylabel("Slowness ($km$ $s^{-1}$)")
                 ax[2].set_ylabel("Back-azimuth ($^o$)")
+                fig.suptitle(
+                    f"Beamforming time-series for {t_series_df_Z['t'][0]} to {t_series_df_Z['t'].values[-1]} UTC"
+                )
                 # plt.gca().yaxis.set_major_locator(MaxNLocator(5))
                 for i in range(3):
                     ax[i].xaxis.set_major_locator(plt.MaxNLocator(3))
@@ -1719,6 +1722,9 @@ class setup_detection:
                 fig.savefig(f"{figpath}/Phase_association_{f_uid}.png", dpi=600)
                 plt.show()
 
+            # Append to datastore:
+            events_df_all = pd.concat([events_df_all, events_df])
+            events_df_all.reset_index(drop=True, inplace=True)
         return events_df_all
 
     def create_location_LUTs(
