@@ -212,25 +212,18 @@ def _phase_associator_core_worker(
                 t_hor_secs_after_start[curr_peak_hor_idx]
                 - t_Z_secs_after_start[curr_peak_Z_idx]
             )
-            if (curr_t_phase_diff > 0) or (curr_t_phase_diff <= max_phase_sep_s):
+            if (curr_t_phase_diff > 0) and (curr_t_phase_diff <= max_phase_sep_s):
                 # calc bazi diff between Z and H
-                best_score = np.inf
                 bazi_diff = min(
                     np.abs(bazis_Z[i] - bazis_hor[j]),
                     360.0 - np.abs(bazis_Z[i] - bazis_hor[j]),
                 )
                 # ii. Check if bazis for Z and horizontals current pick match:
                 if bazi_diff < bazi_tol:
-                    match_score = (
-                        bazi_diff / 360 + curr_t_phase_diff / max_phase_sep_s
-                    )  # normalise to 0-1 range
-                    if match_score < best_score:
-                        best_score = match_score
-                        horz_match = curr_peak_hor_idx
+                    match = [curr_peak_Z_idx, curr_peak_hor_idx]
                     # And associate phases and create event data if a match is found:
-            if horz_match is not None:
-                # Append pair idxs to data store:
-                Z_hor_phase_pair_idxs.append([curr_peak_Z_idx, horz_match])
+                    # Append pair idxs to data store:
+                    Z_hor_phase_pair_idxs.append(match)
 
     return Z_hor_phase_pair_idxs
 
@@ -254,7 +247,7 @@ def _phase_associator(
     bazis_hor = t_series_df_hor["back_azi"].values[peaks_hor]
 
     # -------------------------------------------------------------------
-    # Perform core phae association:
+    # Perform core phase association:
     # Prep. data for numba format:
     if verbosity > 1:
         logger.info("Pre-processing time-series")
@@ -1731,6 +1724,7 @@ class setup_detection:
 
             # Append to datastore:
             events_df_all = pd.concat([events_df_all, events_df])
+            events_df_all.reset_index(drop=True, inplace=True)
         return events_df_all
 
     def create_location_LUTs(
