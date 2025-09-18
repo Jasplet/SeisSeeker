@@ -256,12 +256,8 @@ def _phase_associator(
     # Prep. data for numba format:
     if verbosity > 1:
         logger.info("Pre-processing time-series")
-    t_Z_secs_after_start = obspy.UTCDateTime(t_series_df_Z["t"]) - obspy.UTCDateTime(
-        t_series_df_Z["t"][0]
-    )
-    t_hor_secs_after_start = obspy.UTCDateTime(
-        t_series_df_hor["t"]
-    ) - obspy.UTCDateTime(t_series_df_hor["t"][0])
+    t_Z_secs_after_start = np.array(t_series_df_Z["t"] - t_series_df_Z["t"][0])
+    t_hor_secs_after_start = np.array(t_series_df_hor["t"] - t_series_df_hor["t"][0])
 
     if verbosity > 1:
         logger.info("Performing phase association")
