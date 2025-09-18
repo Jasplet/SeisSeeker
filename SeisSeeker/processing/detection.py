@@ -119,27 +119,25 @@ def _fast_freq_domain_array_proc(
     utheta_rad = np.deg2rad(utheta)
 
     # # Compute time-shifts once:
-    # tlib = np.zeros((n_stations, n_sl, n_baz), dtype=np.complex128)
-    # # r, theta as this is polar coord system:
-    # for ir in range(n_sl):
-    #     for itheta in range(n_baz):
-    #         tlib[:, ir, itheta] = xx * ur[ir] * np.sin(utheta_rad[itheta]) + yy * ur[
-    #             ir
-    #         ] * np.cos(utheta_rad[itheta])
+    tlib = np.zeros((n_stations, n_sl, n_baz), dtype=np.complex128)
+    # r, theta as this is polar coord system:
+    for ir in range(n_sl):
+        for itheta in range(n_baz):
+            tlib[:, ir, itheta] = xx * ur[ir] * np.sin(utheta_rad[itheta]) + yy * ur[
+                ir
+            ] * np.cos(utheta_rad[itheta])
 
     # Vectorized computation of time-shifts for all stations, slowness, and back-azimuth
     # xx and yy are (n_stations,) arrays, ur is (n_sl,), utheta_rad is (n_baz,)
     # We want tlib shape (n_stations, n_sl, n_baz)
-    xx_ = xx[:, np.newaxis, np.newaxis]  # shape (n_stations, 1, 1)
-    yy_ = yy[:, np.newaxis, np.newaxis]  # shape (n_stations, 1, 1)
-    ur_ = ur[np.newaxis, :, np.newaxis]  # shape (1, n_sl, 1)
-    utheta_rad_ = utheta_rad[np.newaxis, np.newaxis, :]  # shape (1, 1, n_baz)
-    tlib_tmp = xx_ * ur_ * np.sin(utheta_rad_) + yy_ * ur_ * np.cos(utheta_rad_)
-    # recast array as complex128
-    tlib = tlib_tmp.astype(np.complex128)
-    del tlib_tmp, xx_, yy_, ur_, utheta_rad_
-    gc.collect()
 
+    # xx_ = xx[:, np.newaxis, np.newaxis]  # shape (n_stations, 1, 1)
+    # yy_ = yy[:, np.newaxis, np.newaxis]  # shape (n_stations, 1, 1)
+    # ur_ = ur[np.newaxis, :, np.newaxis]  # shape (1, n_sl, 1)
+    # utheta_rad_ = utheta_rad[np.newaxis, np.newaxis, :]  # shape (1, 1, n_baz)
+    # tlib_tmp = xx_ * ur_ * np.sin(utheta_rad_) + yy_ * ur_ * np.cos(utheta_rad_)
+    # recast array as complex128
+    # tlib = tlib_tmp.astype(np.complex128)
     Pfreq_all = np.zeros(
         (data.shape[0], len(target_freqs), n_sl, n_baz), dtype=np.complex128
     )
@@ -258,12 +256,12 @@ def _phase_associator(
     # Prep. data for numba format:
     if verbosity > 1:
         logger.info("Pre-processing time-series")
-    t_Z_secs_after_start = []
-    for index, row in t_series_df_Z.iterrows():
-        t_Z_secs_after_start.append(
-            obspy.UTCDateTime(row["t"]) - obspy.UTCDateTime(t_series_df_Z["t"][0])
-        )
-    t_hor_secs_after_start = []
+    t_Z_secs_after_start = obspy.UTCDateTime(t_series_df_Z["t"]) - obspy.UTCDateTime(
+        t_series_df_Z["t"][0]
+    )
+    t_hor_secs_after_start = obspy.UTCDateTime(
+        t_series_df_hor["t"]
+    ) - obspy.UTCDateTime(t_series_df_hor["t"][0])
     for index, row in t_series_df_hor.iterrows():
         t_hor_secs_after_start.append(
             obspy.UTCDateTime(row["t"]) - obspy.UTCDateTime(t_series_df_hor["t"][0])
