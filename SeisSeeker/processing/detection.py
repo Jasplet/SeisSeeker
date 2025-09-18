@@ -1500,28 +1500,38 @@ class setup_detection:
             if fname in self.out_fnames_array_proc:
                 # And load in data:
                 # Read in vertical data:
-                t_series_df_Z = pd.read_csv(fname)
+                t_series_df_Z = pd.read_csv(
+                    fname, converters={"t": lambda x: obspy.UTCDateTime(x)}
+                )
                 # And read in horizontals:
                 try:
                     fname_N = os.path.join(
                         self.outdir, "".join(("detection_t_series_", f_uid, "_chN.csv"))
                     )
-                    t_series_df_N = pd.read_csv(fname_N)
+                    t_series_df_N = pd.read_csv(
+                        fname_N, converters={"t": lambda x: obspy.UTCDateTime(x)}
+                    )
                 except FileNotFoundError:
                     fname_N = os.path.join(
                         self.outdir, "".join(("detection_t_series_", f_uid, "_ch1.csv"))
                     )
-                    t_series_df_N = pd.read_csv(fname_N)
+                    t_series_df_N = pd.read_csv(
+                        fname_N, converters={"t": lambda x: obspy.UTCDateTime(x)}
+                    )
                 try:
                     fname_E = os.path.join(
                         self.outdir, "".join(("detection_t_series_", f_uid, "_chE.csv"))
                     )
-                    t_series_df_E = pd.read_csv(fname_E)
+                    t_series_df_E = pd.read_csv(
+                        fname_E, converters={"t": lambda x: obspy.UTCDateTime(x)}
+                    )
                 except FileNotFoundError:
                     fname_E = os.path.join(
                         self.outdir, "".join(("detection_t_series_", f_uid, "_ch2.csv"))
                     )
-                    t_series_df_E = pd.read_csv(fname_E)
+                    t_series_df_E = pd.read_csv(
+                        fname_E, converters={"t": lambda x: obspy.UTCDateTime(x)}
+                    )
             else:
                 logger.warning(f"fname {fname} not in fname_array_proc list")
                 logger.warning(
