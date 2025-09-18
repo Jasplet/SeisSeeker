@@ -262,11 +262,7 @@ def _phase_associator(
     t_hor_secs_after_start = obspy.UTCDateTime(
         t_series_df_hor["t"]
     ) - obspy.UTCDateTime(t_series_df_hor["t"][0])
-    for index, row in t_series_df_hor.iterrows():
-        t_hor_secs_after_start.append(
-            obspy.UTCDateTime(row["t"]) - obspy.UTCDateTime(t_series_df_hor["t"][0])
-        )
-    # Run function:
+
     if verbosity > 1:
         logger.info("Performing phase association")
     Z_hor_phase_pair_idxs = _phase_associator_core_worker(
