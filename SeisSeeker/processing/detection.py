@@ -212,23 +212,25 @@ def _phase_associator_core_worker(
                 t_hor_secs_after_start[curr_peak_hor_idx]
                 - t_Z_secs_after_start[curr_peak_Z_idx]
             )
-            if curr_t_phase_diff > 0:
-                if curr_t_phase_diff <= max_phase_sep_s:
-                    # ii. Check if bazis for Z and horizontals current pick match:
-                    if np.abs(bazis_Z[i] - bazis_hor[j]) < bazi_tol:
-                        match = True
-                    # And deal with if they are close to North:
-                    elif np.abs(bazis_Z[i] - bazis_hor[j]) > (360.0 - bazi_tol):
-                        match = True
-                    else:
-                        match = False
-
+            if (curr_t_phase_diff > 0) or (curr_t_phase_diff <= max_phase_sep_s):
+                # calc bazi diff between Z and H
+                best_score = np.inf
+                bazi_diff = min(
+                    np.abs(bazis_Z[i] - bazis_hor[j]),
+                    360.0 - np.abs(bazis_Z[i] - bazis_hor[j]),
+                )
+                # ii. Check if bazis for Z and horizontals current pick match:
+                if bazi_diff < bazi_tol:
+                    match_score = (
+                        bazi_diff / 360 + curr_t_phase_diff / max_phase_sep_s
+                    )  # normalise to 0-1 range
+                    if match_score < best_score:
+                        best_score = match_score
+                        horz_match = curr_peak_hor_idx
                     # And associate phases and create event data if a match is found:
-                    if match:
-                        # Append pair idxs to data store:
-                        Z_hor_phase_pair_idxs.append(
-                            [curr_peak_Z_idx, curr_peak_hor_idx]
-                        )
+            if horz_match is not None:
+                # Append pair idxs to data store:
+                Z_hor_phase_pair_idxs.append([curr_peak_Z_idx, horz_match])
 
     return Z_hor_phase_pair_idxs
 
@@ -1597,7 +1599,6 @@ class setup_detection:
             gc.collect()
 
             # Calculate pick thresholds:
-
             mad_pick_threshold_Z = moving_window_mad(
                 t_series_df_Z["power"].values,
                 self.mad_window_length_s,
@@ -1630,8 +1631,7 @@ class setup_detection:
                 distance=min_pick_dist,
                 prominence=mad_pick_threshold_hor,
             )
-
-            # Phase assoicate by BAZI threshold and max. power:
+            # Phase associate by BAZI threshold and max. power:
             events_df = _phase_associator(
                 t_series_df_Z,
                 t_series_df_hor,
@@ -1649,58 +1649,65 @@ class setup_detection:
                 events_df = self._calc_uncertainties(
                     events_df, t_series_df_Z, t_series_df_hor, verbosity=verbosity
                 )
-
-            # Append to datastore:
-            events_df_all = pd.concat([events_df_all, events_df])
-
             # Plot detected, phase-associated picks:
             if verbosity > 1:
                 # print("="*40)
                 logger.info("Event phase associations:")
                 # print(events_df)
                 # print("="*40)
+                time_after_startZ = np.array(t_series_df_Z["t"]) - t_series_df_Z["t"][0]
+                time_after_startH = (
+                    np.array(t_series_df_hor["t"]) - t_series_df_hor["t"][0]
+                )
+
                 fig, ax = plt.subplots(nrows=3, sharex=True, figsize=(9, 6))
                 # Plot power:
                 ax[0].plot(
-                    t_series_df_Z["t"], t_series_df_Z["power"], label="Vertical power"
+                    time_after_startZ, t_series_df_Z["power"], label="Vertical power"
                 )
                 ax[0].plot(
-                    t_series_df_hor["t"],
+                    time_after_startH,
                     t_series_df_hor["power"],
                     label="Horizontal power",
                 )
                 # Plot slowness:
                 ax[1].plot(
-                    t_series_df_Z["t"],
+                    time_after_startZ,
                     t_series_df_Z["slowness"],
                     label="Vertical slowness",
                 )
                 ax[1].plot(
-                    t_series_df_hor["t"],
+                    time_after_startH,
                     t_series_df_hor["slowness"],
                     label="Horizontal slowness",
                 )
                 # Plot back-azimuth:
                 ax[2].plot(
-                    t_series_df_Z["t"],
+                    time_after_startZ,
                     t_series_df_Z["back_azi"],
                     label="Vertical back-azimuth",
                 )
                 ax[2].plot(
-                    t_series_df_hor["t"],
+                    time_after_startH,
                     t_series_df_hor["back_azi"],
                     label="Horizontal back-azimuth",
                 )
-                if len(events_df_all) > 0:
+                if len(events_df) > 0:
+                    events_t1_after_start = (
+                        np.array(events_df["t1"]) - t_series_df_Z["t"][0]
+                    )
+                    events_t2_after_start = (
+                        np.array(events_df["t2"]) - t_series_df_Z["t"][0]
+                    )
                     ax[0].scatter(
-                        events_df_all["t1"],
-                        np.ones(len(events_df_all)) * np.max(t_series_df_Z["power"]),
+                        events_t1_after_start,
+                        np.ones(len(events_df)) * np.max(t_series_df_Z["power"]),
                         c="r",
                         label="P phase picks",
                     )
                     ax[0].scatter(
-                        events_df_all["t2"],
-                        np.ones(len(events_df_all)) * np.max(t_series_df_Z["power"]),
+                        events_t2_after_start,
+                        np.ones(len(events_df)) * np.max(t_series_df_Z["power"]),
                         c="b",
                         label="S phase picks",
                     )
@@ -1711,6 +1718,9 @@ class setup_detection:
                 ax[0].set_ylabel("Power (arb. units)")
                 ax[1].set_ylabel("Slowness ($km$ $s^{-1}$)")
                 ax[2].set_ylabel("Back-azimuth ($^o$)")
+                fig.suptitle(
+                    f"Beamforming time-series for {t_series_df_Z['t'][0]} to {t_series_df_Z['t'].values[-1]} UTC"
+                )
                 # plt.gca().yaxis.set_major_locator(MaxNLocator(5))
                 for i in range(3):
                     ax[i].xaxis.set_major_locator(plt.MaxNLocator(3))
@@ -1719,6 +1729,8 @@ class setup_detection:
                 fig.savefig(f"{figpath}/Phase_association_{f_uid}.png", dpi=600)
                 plt.show()
 
+            # Append to datastore:
+            events_df_all = pd.concat([events_df_all, events_df])
         return events_df_all
 
     def create_location_LUTs(
