@@ -1485,7 +1485,7 @@ class setup_detection:
             fnames = glob.glob(
                 os.path.join(self.outdir, "detection_t_series_*_chZ.csv")
             )
-        for fname in fnames:
+        for fname in sorted(fnames):
             f_uid = fname[-21:-8]
             # Check if in list to process:
             if fname in self.out_fnames_array_proc:
