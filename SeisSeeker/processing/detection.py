@@ -498,32 +498,42 @@ def _create_stacked_data_st(st, Z_all, N_all, E_all):
 def _create_phase_weighted_stack_st(st, Z_all, N_all, E_all, degree=1):
     """Function to create stacked data st."""
 
-    Z_inst_phase_all = hilbert(Z_all, axis=1)
-    N_inst_phase_all = hilbert(N_all, axis=1)
-    E_inst_phase_all = hilbert(E_all, axis=1)
+    Z_analytical_signal = hilbert(Z_all, axis=1)
+    N_analytical_signal = hilbert(N_all, axis=1)
+    E_analytical_signal = hilbert(E_all, axis=1)
+    # .  Scipy hilbert transform returns the analytical signal with takes the form:
+    # .  s(t) = x(t) + i * y(t) = A(t) * exp(i * phi(t))
+    # .  where x(t) is the original signal, y(t) is the Hilbert transform of the signal,
+    # .  A(t) is the instantaneous amplitude (envelope) and phi(t) is the instantaneous phase.
 
-    Z_phase_stack = np.absolute(np.mean(np.exp(Z_inst_phase_all * 1j), axis=1))
-    N_phase_stack = np.absolute(np.mean(np.exp(N_inst_phase_all * 1j), axis=1))
-    E_phase_stack = np.absolute(np.mean(np.exp(E_inst_phase_all * 1j), axis=1))
+    # .  We want to calculate the phase stack, which is given by:
+    # .  c(t) = |(1/N) * sum(exp(i * phi_k(t) | ^v
+    Z_inst_phase = Z_analytical_signal / np.abs(Z_analytical_signal)
+    N_inst_phase = N_analytical_signal / np.abs(N_analytical_signal)
+    E_inst_phase = E_analytical_signal / np.abs(E_analytical_signal)
+
+    Z_coherence = np.absolute(np.mean(Z_inst_phase, axis=1))
+    N_coherence = np.absolute(np.mean(N_inst_phase, axis=1))
+    E_coherence = np.absolute(np.mean(E_inst_phase, axis=1))
     composite_st = obspy.Stream()
     # For Z stacked:
     tr = st[0].copy()
     tr.stats.station = "PW-STACK"
     tr.stats.channel = st[0].stats.channel[0:2] + "Z"
-    tr.data = np.mean(Z_all, axis=1) * (Z_phase_stack**degree)
+    tr.data = np.mean(Z_all, axis=1) * (Z_coherence**degree)
     print(tr.data.shape)
     composite_st.append(tr)
     # For N stacked:
     tr = st[0].copy()
     tr.stats.station = "PW-STACK"
     tr.stats.channel = st[0].stats.channel[0:2] + "N"
-    tr.data = np.mean(N_all, axis=1) * (N_phase_stack**degree)
+    tr.data = np.mean(N_all, axis=1) * (N_coherence**degree)
     composite_st.append(tr)
     # For E stacked:
     tr = st[0].copy()
     tr.stats.station = "PW-STACK"
     tr.stats.channel = st[0].stats.channel[0:2] + "E"
-    tr.data = np.mean(E_all, axis=1) * (E_phase_stack**degree)
+    tr.data = np.mean(E_all, axis=1) * (E_coherence**degree)
     composite_st.append(tr)
     del tr
     gc.collect()
