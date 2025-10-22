@@ -1093,9 +1093,11 @@ class setup_detection:
         Returns time-series of coherency (power), slowness and back-azimuth.
         """
         # Calcualte ux, uy:
-        ur = np.linspace(0, self.max_sl, Psum_all.shape[1])
-        utheta = utheta = np.linspace(
-            0, 360 - (360 / Psum_all.shape[2]), Psum_all.shape[2]
+        ur = np.linspace(self.min_sl, self.max_sl, Psum_all.shape[1])
+        utheta = np.linspace(
+            self.min_baz,
+            self.max_baz - (self.max_baz / Psum_all.shape[2]),
+            Psum_all.shape[2],
         )
         # Create time-series:
         n_win_curr = Psum_all.shape[0]
@@ -1633,6 +1635,9 @@ class setup_detection:
                 height=mad_pick_threshold_hor,
                 distance=min_pick_dist,
                 prominence=mad_pick_threshold_hor,
+            )
+            print(
+                f"Found {len(peaks_Z)} P-phase picks and {len(peaks_hor)} S-phase picks for file with uid {f_uid}"
             )
             # Phase associate by BAZI threshold and max. power:
             events_df = _phase_associator(
