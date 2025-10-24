@@ -195,6 +195,7 @@ def _phase_associator_core_worker(
     t_Z_secs_after_start,
     t_hor_secs_after_start,
     max_phase_sep_s,
+    min_phase_sep_s,
 ):
     """Function to do the heavy lifting of the phase association."""
     # Specify data stores:
@@ -212,7 +213,11 @@ def _phase_associator_core_worker(
                 t_hor_secs_after_start[curr_peak_hor_idx]
                 - t_Z_secs_after_start[curr_peak_Z_idx]
             )
-            if (curr_t_phase_diff > 0) and (curr_t_phase_diff <= max_phase_sep_s):
+            if (
+                (curr_t_phase_diff > 0)
+                and (curr_t_phase_diff <= max_phase_sep_s)
+                and (curr_t_phase_diff >= min_phase_sep_s)
+            ):
                 # calc bazi diff between Z and H
                 bazi_diff = min(
                     np.abs(bazis_Z[i] - bazis_hor[j]),
@@ -236,6 +241,7 @@ def _phase_associator(
     bazi_tol,
     filt_phase_assoc_by_max_power,
     max_phase_sep_s,
+    min_phase_sep_s,
     min_event_sep_s,
     verbosity=0,
 ):
@@ -265,6 +271,7 @@ def _phase_associator(
         t_Z_secs_after_start,
         t_hor_secs_after_start,
         max_phase_sep_s,
+        min_phase_sep_s,
     )
     # Organise outputs into useful form:
     if verbosity > 1:
@@ -273,18 +280,12 @@ def _phase_associator(
     curr_events = {
         "t1": [],
         "t2": [],
-        "t1_powZ": [],
-        "t1_powH": [],
-        "t2_powZ": [],
-        "t2_powH": [],
-        "t1_slowZ": [],
-        "t1_slowH": [],
-        "t2_slowZ": [],
-        "t2_slowH": [],
-        "t1_baziZ": [],
-        "t1_baziH": [],
-        "t2_baziZ": [],
-        "t2_baziH": [],
+        "pow1": [],
+        "pow2": [],
+        "slow1": [],
+        "slow2": [],
+        "bazi1": [],
+        "bazi2": [],
     }
 
     for event_idx in range(len(Z_hor_phase_pair_idxs)):
@@ -292,18 +293,12 @@ def _phase_associator(
         curr_peak_hor_idx = Z_hor_phase_pair_idxs[event_idx][1]
         curr_events["t1"].append(t_series_df_Z["t"][curr_peak_Z_idx])
         curr_events["t2"].append(t_series_df_hor["t"][curr_peak_hor_idx])
-        curr_events["t1_powZ"].append(t_series_df_Z["power"][curr_peak_Z_idx])
-        curr_events["t1_powH"].append(t_series_df_hor["power"][curr_peak_hor_idx])
-        curr_events["t2_powZ"].append(t_series_df_Z["power"][curr_peak_Z_idx])
-        curr_events["t2_powH"].append(t_series_df_hor["power"][curr_peak_hor_idx])
-        curr_events["t1_slowZ"].append(t_series_df_Z["slowness"][curr_peak_Z_idx])
-        curr_events["t1_slowH"].append(t_series_df_Z["slowness"][curr_peak_Z_idx])
-        curr_events["t2_slowZ"].append(t_series_df_hor["slowness"][curr_peak_hor_idx])
-        curr_events["t2_slowH"].append(t_series_df_hor["slowness"][curr_peak_hor_idx])
-        curr_events["t1_baziZ"].append(t_series_df_Z["back_azi"][curr_peak_Z_idx])
-        curr_events["t1_baziH"].append(t_series_df_hor["back_azi"][curr_peak_hor_idx])
-        curr_events["t2_baziZ"].append(t_series_df_Z["back_azi"][curr_peak_Z_idx])
-        curr_events["t2_baziH"].append(t_series_df_hor["back_azi"][curr_peak_hor_idx])
+        curr_events["pow1"].append(t_series_df_Z["power"][curr_peak_Z_idx])
+        curr_events["pow2"].append(t_series_df_hor["power"][curr_peak_hor_idx])
+        curr_events["slow1"].append(t_series_df_Z["slowness"][curr_peak_Z_idx])
+        curr_events["slow2"].append(t_series_df_hor["slowness"][curr_peak_hor_idx])
+        curr_events["bazi1"].append(t_series_df_Z["back_azi"][curr_peak_Z_idx])
+        curr_events["bazi2"].append(t_series_df_hor["back_azi"][curr_peak_hor_idx])
 
     events_df = pd.DataFrame(curr_events)
     # And tidy:
@@ -355,9 +350,7 @@ def _phase_associator(
             # And remove duplicate S pick associations:
             # (using same max. power method)
             # Append summed powers, for sorting:
-            sum_pows = (
-                filt_events_df["t1_powZ"].values + filt_events_df["t2_powH"].values
-            )
+            sum_pows = filt_events_df["pow1"].values + filt_events_df["pow2"].values
             filt_events_df["sum_pows"] = sum_pows
             # Remove t2 duplicates, keep highest summed power:
             filt_events_df.sort_values("sum_pows", inplace=True)
@@ -383,9 +376,9 @@ def _find_max_power_event(events):
         list (of Dataframe Rows) of event
 
     """
-    powZ_tmp = np.array([event.t1_powZ for event in events])
-    powH_tmp = np.array([event.t2_powH for event in events])
-    combined_pows_tmp = powZ_tmp + powH_tmp
+    pow1_tmp = np.array([event.pow1 for event in events])
+    pow2_tmp = np.array([event.pow2 for event in events])
+    combined_pows_tmp = pow1_tmp + pow2_tmp
     max_power_idx = np.argmax(combined_pows_tmp)
     max_power_event = events[max_power_idx]
     return max_power_event
@@ -731,6 +724,7 @@ class setup_detection:
         self.min_event_sep_s = 1.0
         self.bazi_tol = 20.0
         self.max_phase_sep_s = 2.5
+        self.min_phase_sep_s = 0
         self.filt_phase_assoc_by_max_power = True
         self.calc_uncertainties = False
         # For location:
@@ -1107,9 +1101,11 @@ class setup_detection:
         Returns time-series of coherency (power), slowness and back-azimuth.
         """
         # Calcualte ux, uy:
-        ur = np.linspace(0, self.max_sl, Psum_all.shape[1])
-        utheta = utheta = np.linspace(
-            0, 360 - (360 / Psum_all.shape[2]), Psum_all.shape[2]
+        ur = np.linspace(self.min_sl, self.max_sl, Psum_all.shape[1])
+        utheta = np.linspace(
+            self.min_baz,
+            self.max_baz - (self.max_baz / Psum_all.shape[2]),
+            Psum_all.shape[2],
         )
         # Create time-series:
         n_win_curr = Psum_all.shape[0]
@@ -1647,6 +1643,9 @@ class setup_detection:
                 height=mad_pick_threshold_hor,
                 distance=min_pick_dist,
                 prominence=mad_pick_threshold_hor,
+            )
+            print(
+                f"Found {len(peaks_Z)} P-phase picks and {len(peaks_hor)} S-phase picks for file with uid {f_uid}"
             )
             # Phase associate by BAZI threshold and max. power:
             events_df = _phase_associator(
