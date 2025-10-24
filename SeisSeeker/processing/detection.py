@@ -1656,6 +1656,7 @@ class setup_detection:
                 self.bazi_tol,
                 self.filt_phase_assoc_by_max_power,
                 self.max_phase_sep_s,
+                self.min_phase_sep_s,
                 self.min_event_sep_s,
                 verbosity=verbosity,
             )
